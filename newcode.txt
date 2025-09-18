@@ -1,0 +1,49 @@
+import cv2
+import numpy as np
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+from sklearn.metrics.pairwise import cosine_similarity
+import platform
+
+# ================= CONFIG ==============
+FRAME_SKIP = 5          # sample every 5 frames
+SEQ_LEN = 12            # number of frames per sequence
+THRESHOLD = 0.75        # cosine similarity threshold
+NUM_STEPS = 4           # total steps in the sequence
+
+# ---------------- Device ----------------
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ---------------- CNN Model ----------------
+cnn_model = models.resnet18(pretrained=True)
+cnn_model = torch.nn.Sequential(*list(cnn_model.children())[:-1])  # remove FC
+cnn_model.eval().to(device)
+
+# ---------------- LSTM Feature Extractor ----------------
+class LSTMFeatureExtractor(torch.nn.Module):
+    def __init__(self, input_size=512, hidden_size=128, num_layers=1):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+
+    def forward(self, x):
+        _, (h_n, _) = self.lstm(x)
+        return h_n.squeeze(0)
+
+# Load LSTM weights
+lstm_model = LSTMFeatureExtractor(input_size=512, hidden_size=128).to(device)
+checkpoint = torch.load(r"C:\Users\sinch\ai\lstm_model.pth", map_location=device)
+filtered_dict = {k: v for k, v in checkpoint.items() if not k.startswith("fc.")}
+lstm_model.load_state_dict(filtered_dict, strict=False)
+lstm_model.eval()
+print("✅ LSTM model loaded successfully")
+
+# ---------------- Reference Features ----------------
+reference_features = np.load("reference_sequences.npy")  # shape: [num_steps, hidden_size]
+
+# ---------------- Transform ----------------
+transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((224,224)),
+    transforms.ToTensor(),
+])
